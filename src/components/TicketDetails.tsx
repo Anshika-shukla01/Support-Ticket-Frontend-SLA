@@ -7,6 +7,13 @@ type Role = "USER" | "AGENT" | "ADMIN";
 type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
 type SLAState = "ON_TRACK" | "AT_RISK" | "BREACHED";
 
+const NEXT_STATUSES: Record<TicketStatus, TicketStatus[]> = {
+  OPEN: ["IN_PROGRESS"],
+  IN_PROGRESS: ["RESOLVED"],
+  RESOLVED: ["CLOSED"],
+  CLOSED: [],
+};
+
 type Agent = { id: string; name: string; email: string; role: Role };
 type Ticket = {
   id: string;
@@ -36,6 +43,8 @@ type Ticket = {
 };
 
 type TicketResponse = { ticket: Ticket | null };
+
+
 
 const QUERY = gql`
   query Ticket($id: ID!) {
@@ -68,15 +77,18 @@ const AGENTS_QUERY = gql`
 const ASSIGN_MUTATION = gql`
   mutation AssignTicket($ticketId: ID!, $agentId: ID!) {
     assignTicket(ticketId: $ticketId, agentId: $agentId) {
-      id status agent { name email role }
+      id status agent { id name email role }
     }
   }
 `;
 
 const STATUS_MUTATION = gql`
-  mutation UpdateStatus($ticketId: ID!, $status: TicketStatus!) {
-    updateTicketStatus(ticketId: $ticketId, status: $status) {
-      id status firstResponseAt resolvedAt
+  mutation ChangeTicketStatus($ticketId: ID!, $status: TicketStatus!) {
+    changeTicketStatus(ticketId: $ticketId, status: $status) {
+      id
+      status
+      firstResponseAt
+      resolvedAt
       sla {
         firstResponseState
         resolutionState
@@ -88,10 +100,16 @@ const STATUS_MUTATION = gql`
 `;
 
 const COMMENT_MUTATION = gql`
-  mutation CreateComment($ticketId: ID!, $content: String!) {
-    createComment(ticketId: $ticketId, content: $content) {
-      id content createdAt
-      author { name email role }
+  mutation AddComment($ticketId: ID!, $content: String!) {
+    addComment(ticketId: $ticketId, content: $content) {
+      id
+      content
+      createdAt
+      author {
+        name
+        email
+        role
+      }
     }
   }
 `;
@@ -163,18 +181,28 @@ export default function TicketDetails({ ticketId, onBack }: Props) {
   }, [canAssign]);
 
   async function assignAgent(agentId: string) {
-    if (!agentId) return;
-    setAssigning(true);
-    setError("");
-    try {
-      await graphqlClient.request(ASSIGN_MUTATION, { ticketId, agentId });
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not assign ticket.");
-    } finally {
-      setAssigning(false);
-    }
+  if (!agentId) return;
+
+  setAssigning(true);
+  setError("");
+
+  try {
+    await graphqlClient.request(ASSIGN_MUTATION, {
+      ticketId,
+      agentId,
+    });
+
+    await load();
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Could not assign ticket."
+    );
+  } finally {
+    setAssigning(false);
   }
+}
 
   async function updateStatus(status: TicketStatus) {
     if (!ticket || status === ticket.status) return;
@@ -370,28 +398,60 @@ export default function TicketDetails({ ticketId, onBack }: Props) {
                   ))}
                 </select>
               </label>
-              <p className="helper">The backend assigns the ticket and moves it to In Progress.</p>
+              <p className="helper">
+                Assignment permissions and lifecycle transitions
+                are enforced by the backend.
+              </p>
             </div>
           )}
 
           {canManageStatus && (
             <div className="detail-card">
               <h3>Manage lifecycle</h3>
-              <label>
-                Status
-                <select
-                  value={ticket.status}
-                  disabled={saving}
-                  onChange={(e) => void updateStatus(e.target.value as TicketStatus)}
-                >
-                  {(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] as TicketStatus[]).map((s) => (
-                    <option key={s} value={s}>{label(s)}</option>
-                  ))}
-                </select>
-              </label>
-              <p className="helper">Invalid lifecycle transitions are rejected by the backend.</p>
+
+              {NEXT_STATUSES[ticket.status].length === 0 ? (
+                <p className="helper">
+                  This ticket has reached the end of its lifecycle.
+                </p>
+              ) : (
+                <label>
+                  Next status
+
+                  <select
+                    value=""
+                    disabled={saving}
+                    onChange={(e) => {
+                      const nextStatus =
+                        e.target.value as TicketStatus;
+
+                      if (nextStatus) {
+                        void updateStatus(nextStatus);
+                      }
+                    }}
+                  >
+                    <option value="">
+                      Select next status
+                    </option>
+
+                    {NEXT_STATUSES[ticket.status].map((status) => (
+                      <option
+                        key={status}
+                        value={status}
+                      >
+                        {label(status)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <p className="helper">
+                Tickets can only move through the allowed lifecycle
+                transitions.
+              </p>
             </div>
           )}
+
         </aside>
       </div>
     </section>

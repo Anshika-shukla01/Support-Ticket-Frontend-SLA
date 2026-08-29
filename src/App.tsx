@@ -18,7 +18,13 @@ type User = {
 function App() {
   const [user, setUser] = useState<User | null>(() => {
     const raw = localStorage.getItem("user");
-    if (!raw) return null;
+    const token = localStorage.getItem("token");
+
+    if (!raw || !token) {
+      localStorage.removeItem("user");
+      localStorage.removeItem("token");
+      return null;
+    }
     try {
       return JSON.parse(raw) as User;
     } catch {
